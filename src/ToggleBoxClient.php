@@ -332,7 +332,7 @@ class ToggleBoxClient
         }
 
         try {
-            $path = "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/stats/batch";
+            $path = "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/stats/events";
             $this->http->post($path, ['events' => $this->pendingEvents]);
             $this->pendingEvents = [];
         } catch (ToggleBoxException) {
