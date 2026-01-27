@@ -41,6 +41,14 @@ $allConfigs = $client->getAllConfigs();
 
 // Get a specific version
 $config = $client->getConfigVersion('1.2.3');
+
+// List all config versions
+$versions = $client->getConfigVersions();
+foreach ($versions as $version) {
+    echo $version['version'];  // '1.2.3'
+    echo $version['isStable']; // true/false
+    echo $version['createdAt']; // ISO8601 timestamp
+}
 ```
 
 ## Tier 2: Feature Flags (2-Value Model)
@@ -63,6 +71,16 @@ echo $result->reason;      // 'targeting_match', 'rollout', etc.
 // Simple boolean check
 if ($client->isFlagEnabled('dark-mode', $context)) {
     enableDarkMode();
+}
+
+// Get flag metadata without evaluation
+$flagInfo = $client->getFlagInfo('dark-mode');
+if ($flagInfo !== null) {
+    echo $flagInfo->flagKey;     // 'dark-mode'
+    echo $flagInfo->name;        // 'Dark Mode'
+    echo $flagInfo->enabled;     // true/false
+    echo $flagInfo->valueA;      // Value A
+    echo $flagInfo->valueB;      // Value B
 }
 ```
 
@@ -94,6 +112,25 @@ $client->trackConversion('checkout-redesign', $context, new ConversionData(
     metricName: 'purchase',
     value: 99.99, // Optional: for sum/average metrics
 ));
+
+// Track a custom event
+$client->trackEvent('page_view', $context, [
+    'experimentKey' => 'checkout-redesign', // Optional
+    'variationKey' => 'variant_1',          // Optional
+    'properties' => [                       // Optional
+        'page' => '/checkout',
+        'referrer' => 'google.com',
+    ],
+]);
+
+// Get experiment metadata without assignment
+$experimentInfo = $client->getExperimentInfo('checkout-redesign');
+if ($experimentInfo !== null) {
+    echo $experimentInfo->experimentKey; // 'checkout-redesign'
+    echo $experimentInfo->name;          // 'Checkout Redesign'
+    echo $experimentInfo->status;        // 'running', 'draft', 'completed'
+    print_r($experimentInfo->variations); // Array of variations
+}
 
 // Flush stats to server (call at end of request)
 $client->flushStats();
@@ -133,6 +170,19 @@ $client->refresh();
 
 // Clear all caches
 $client->clearCache();
+```
+
+## Health Check
+
+```php
+// Check API connectivity
+try {
+    $health = $client->checkConnection();
+    echo $health['status']; // 'ok'
+} catch (\ToggleBox\Exceptions\ToggleBoxException $e) {
+    // API is unreachable
+    log_error('ToggleBox API is down: ' . $e->getMessage());
+}
 ```
 
 ## Error Handling

@@ -139,6 +139,19 @@ class ToggleBoxClient
         return $config;
     }
 
+    /**
+     * List all configuration versions for the current platform/environment.
+     *
+     * @return array<array{version: string, isStable: bool, createdAt: string}>
+     * @throws ToggleBoxException
+     */
+    public function getConfigVersions(): array
+    {
+        $path = "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/versions";
+        $response = $this->http->get($path);
+        return $response['data'] ?? [];
+    }
+
     // ==================== TIER 2: FEATURE FLAGS (2-value) ====================
 
     /**
@@ -214,6 +227,23 @@ class ToggleBoxClient
         $this->cache->set($cacheKey, $flags, $this->cacheTtl);
 
         return $flags;
+    }
+
+    /**
+     * Get a specific flag's metadata without evaluation.
+     *
+     * @param string $flagKey The flag key to retrieve
+     * @return Flag|null The flag metadata or null if not found
+     */
+    public function getFlagInfo(string $flagKey): ?Flag
+    {
+        $path = "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/flags/{$flagKey}";
+        try {
+            $response = $this->http->get($path);
+            return Flag::fromArray($response['data']);
+        } catch (ToggleBoxException) {
+            return null;
+        }
     }
 
     // ==================== TIER 3: EXPERIMENTS ====================
@@ -304,6 +334,43 @@ class ToggleBoxClient
         return $experiments;
     }
 
+    /**
+     * Get a specific experiment's metadata without assignment.
+     *
+     * @param string $experimentKey The experiment key to retrieve
+     * @return Experiment|null The experiment metadata or null if not found
+     */
+    public function getExperimentInfo(string $experimentKey): ?Experiment
+    {
+        $path = "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/experiments/{$experimentKey}";
+        try {
+            $response = $this->http->get($path);
+            return Experiment::fromArray($response['data']);
+        } catch (ToggleBoxException) {
+            return null;
+        }
+    }
+
+    /**
+     * Track a custom event.
+     *
+     * @param string $eventName Name of the event
+     * @param ExperimentContext $context User context
+     * @param array|null $data Optional event data with 'experimentKey', 'variationKey', 'properties'
+     */
+    public function trackEvent(string $eventName, ExperimentContext $context, ?array $data = null): void
+    {
+        $this->queueEvent('custom_event', [
+            'eventName' => $eventName,
+            'userId' => $context->userId,
+            'experimentKey' => $data['experimentKey'] ?? null,
+            'variationKey' => $data['variationKey'] ?? null,
+            'properties' => $data['properties'] ?? [],
+            'country' => $context->country,
+            'language' => $context->language,
+        ]);
+    }
+
     // ==================== CACHE & LIFECYCLE ====================
 
     /**
@@ -346,6 +413,17 @@ class ToggleBoxClient
     public function clearCache(): void
     {
         $this->cache->clear();
+    }
+
+    /**
+     * Check API connectivity and service health.
+     *
+     * @return array{status: string, uptime?: int}
+     * @throws ToggleBoxException If API is unreachable
+     */
+    public function checkConnection(): array
+    {
+        return $this->http->get('/api/v1/health');
     }
 
     // ==================== PRIVATE HELPERS ====================
