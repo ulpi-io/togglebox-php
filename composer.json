@@ -1,5 +1,6 @@
 {
   "name": "togglebox/sdk",
+  "version": "0.1.0",
   "description": "PHP SDK for ToggleBox - Remote Config, Feature Flags, and A/B Experiments",
   "type": "library",
   "license": "MIT",
