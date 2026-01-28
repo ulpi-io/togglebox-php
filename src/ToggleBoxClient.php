@@ -573,15 +573,15 @@ class ToggleBoxClient
                                 );
                             }
 
-                            $matchedLanguage = false;
+                            $matchedLangTarget = null;
                             foreach ($languages as $langTarget) {
                                 if (strtolower($langTarget['language']) === strtolower($context->language)) {
-                                    $matchedLanguage = true;
+                                    $matchedLangTarget = $langTarget;
                                     break;
                                 }
                             }
 
-                            if (!$matchedLanguage) {
+                            if ($matchedLangTarget === null) {
                                 // Language doesn't match → return defaultValue (not A)
                                 $served = $getDefaultServed();
                                 return new FlagResult(
@@ -591,13 +591,23 @@ class ToggleBoxClient
                                     reason: 'language_not_targeted',
                                 );
                             }
+
+                            // Language matches → use language target's serveValue
+                            $served = $matchedLangTarget['serveValue'] ?? 'A';
+                            return new FlagResult(
+                                flagKey: $flag->flagKey,
+                                value: $getValue($served),
+                                servedValue: $served,
+                                reason: 'targeting_match',
+                            );
                         }
 
-                        // Country (and optionally language) matches → return serveValue from targeting
+                        // Country matches (no language targeting) → use country target's serveValue
+                        $served = $countryTarget['serveValue'] ?? 'A';
                         return new FlagResult(
                             flagKey: $flag->flagKey,
-                            value: $getValue('B'),
-                            servedValue: 'B',
+                            value: $getValue($served),
+                            servedValue: $served,
                             reason: 'targeting_match',
                         );
                     }
