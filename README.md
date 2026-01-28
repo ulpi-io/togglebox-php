@@ -197,15 +197,15 @@ try {
 
 ## Configuration Options
 
-| Option | Type | Required | Description |
-|--------|------|----------|-------------|
-| `platform` | string | Yes | Platform name (e.g., 'web', 'mobile') |
-| `environment` | string | Yes | Environment name (e.g., 'production', 'staging') |
-| `apiUrl` | string | * | API base URL (for self-hosted) |
-| `tenantSubdomain` | string | * | Tenant subdomain (for cloud) |
-| `apiKey` | string | No | API key for authentication |
-| `cache` | CacheOptions | No | Cache configuration |
-| `configVersion` | string | No | Default config version ('stable', 'latest', or specific) |
+| Option            | Type         | Required | Description                                              |
+| ----------------- | ------------ | -------- | -------------------------------------------------------- |
+| `platform`        | string       | Yes      | Platform name (e.g., 'web', 'mobile')                    |
+| `environment`     | string       | Yes      | Environment name (e.g., 'production', 'staging')         |
+| `apiUrl`          | string       | \*       | API base URL (for self-hosted)                           |
+| `tenantSubdomain` | string       | \*       | Tenant subdomain (for cloud)                             |
+| `apiKey`          | string       | No       | API key for authentication                               |
+| `cache`           | CacheOptions | No       | Cache configuration                                      |
+| `configVersion`   | string       | No       | Default config version ('stable', 'latest', or specific) |
 
 \* Either `apiUrl` or `tenantSubdomain` is required, but not both.
 
