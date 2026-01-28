@@ -32,23 +32,13 @@ $client = new ToggleBoxClient(new ClientOptions(
 Remote configs provide the same value to everyone - perfect for feature toggles, API URLs, and app settings.
 
 ```php
-// Get a single config value
+// Get a single config value with type-safe default
 $apiUrl = $client->getConfigValue('api_url', 'https://default.api.com');
 $maxRetries = $client->getConfigValue('max_retries', 3);
 
-// Get all configs
+// Get all active config parameters as key-value array
 $allConfigs = $client->getAllConfigs();
-
-// Get a specific version
-$config = $client->getConfigVersion('1.2.3');
-
-// List all config versions
-$versions = $client->getConfigVersions();
-foreach ($versions as $version) {
-    echo $version['version'];  // '1.2.3'
-    echo $version['isStable']; // true/false
-    echo $version['createdAt']; // ISO8601 timestamp
-}
+// Returns: ['api_url' => 'https://...', 'max_retries' => 5, ...]
 ```
 
 ## Tier 2: Feature Flags (2-Value Model)

@@ -13,7 +13,6 @@ class ClientOptions
         public readonly ?string $tenantSubdomain = null,
         public readonly ?string $apiKey = null,
         public readonly ?CacheOptions $cache = null,
-        public readonly string $configVersion = 'stable',
         public readonly ?StatsOptions $stats = null,
     ) {
     }

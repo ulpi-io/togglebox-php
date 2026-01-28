@@ -32,11 +32,14 @@ class ToggleBoxClient
     private CacheInterface $cache;
     private string $platform;
     private string $environment;
-    private string $configVersion;
     private int $cacheTtl;
+    private bool $cacheEnabled;
 
-    /** @var array<string, array{eventType: string, data: array}> */
+    /** @var array<array{type: string, timestamp: string, ...}> */
     private array $pendingEvents = [];
+
+    /** Maximum pending events to prevent unbounded memory growth */
+    private int $maxQueueSize = 1000;
 
     public function __construct(
         ClientOptions $options,
@@ -62,8 +65,9 @@ class ToggleBoxClient
 
         $this->platform = $options->platform;
         $this->environment = $options->environment;
-        $this->configVersion = $options->configVersion;
         $this->cacheTtl = $options->cache?->ttl ?? 300;
+        // SECURITY: Check cache enabled flag (default true if not set)
+        $this->cacheEnabled = $options->cache?->enabled ?? true;
         $this->http = new HttpClient($options->getApiUrl(), $options->apiKey);
         $this->cache = $cache ?? new ArrayCache();
     }
@@ -100,56 +104,36 @@ class ToggleBoxClient
     }
 
     /**
-     * Get configuration using the configured version (default: 'stable').
+     * Get all active config parameters as key-value object.
+     *
+     * Firebase-style individual parameters. Each parameter has its own version history,
+     * but the API returns only active versions as a simple key-value object.
      *
      * @return array<string, mixed>
      * @throws ToggleBoxException
      */
     public function getConfig(): array
     {
-        return $this->getConfigVersion($this->configVersion);
-    }
+        $cacheKey = "config:{$this->platform}:{$this->environment}";
 
-    /**
-     * Get a specific config version.
-     *
-     * @return array<string, mixed>
-     * @throws ToggleBoxException
-     */
-    public function getConfigVersion(string $version): array
-    {
-        $cacheKey = "config:{$this->platform}:{$this->environment}:{$version}";
-
-        $cached = $this->cache->get($cacheKey);
-        if ($cached !== null) {
-            return $cached;
+        // SECURITY: Only use cache if enabled
+        if ($this->cacheEnabled) {
+            $cached = $this->cache->get($cacheKey);
+            if ($cached !== null) {
+                return $cached;
+            }
         }
 
-        $path = match ($version) {
-            'stable' => "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/versions/latest/stable",
-            'latest' => "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/versions/latest",
-            default => "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/versions/{$version}",
-        };
-
+        $path = "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/configs";
         $response = $this->http->get($path);
-        $config = $response['data']['config'] ?? [];
+        $config = $response['data'] ?? [];
 
-        $this->cache->set($cacheKey, $config, $this->cacheTtl);
+        // Only cache if enabled
+        if ($this->cacheEnabled) {
+            $this->cache->set($cacheKey, $config, $this->cacheTtl);
+        }
 
         return $config;
-    }
-
-    /**
-     * List all configuration versions for the current platform/environment.
-     *
-     * @return array<array{version: string, isStable: bool, createdAt: string}>
-     * @throws ToggleBoxException
-     */
-    public function getConfigVersions(): array
-    {
-        $path = "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/versions";
-        $response = $this->http->get($path);
-        return $response['data'] ?? [];
     }
 
     // ==================== TIER 2: FEATURE FLAGS (2-value) ====================
@@ -178,11 +162,13 @@ class ToggleBoxClient
         $result = $this->evaluateFlag($flag, $context);
 
         // Queue exposure event
+        // Note: API schema expects 'value' key (not 'servedValue')
         $this->queueEvent('flag_evaluation', [
             'flagKey' => $flagKey,
-            'servedValue' => $result->servedValue,
+            'value' => $result->servedValue,
             'userId' => $context->userId,
             'country' => $context->country,
+            'language' => $context->language,
         ]);
 
         return $result;
@@ -211,9 +197,12 @@ class ToggleBoxClient
     {
         $cacheKey = "flags:{$this->platform}:{$this->environment}";
 
-        $cached = $this->cache->get($cacheKey);
-        if ($cached !== null) {
-            return $cached;
+        // SECURITY: Only use cache if enabled
+        if ($this->cacheEnabled) {
+            $cached = $this->cache->get($cacheKey);
+            if ($cached !== null) {
+                return $cached;
+            }
         }
 
         $path = "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/flags";
@@ -224,7 +213,10 @@ class ToggleBoxClient
             $response['data'] ?? []
         );
 
-        $this->cache->set($cacheKey, $flags, $this->cacheTtl);
+        // Only cache if enabled
+        if ($this->cacheEnabled) {
+            $this->cache->set($cacheKey, $flags, $this->cacheTtl);
+        }
 
         return $flags;
     }
@@ -286,6 +278,9 @@ class ToggleBoxClient
     /**
      * Track a conversion event for an experiment.
      *
+     * Note: Uses getVariantWithoutTracking to avoid inflating exposure stats.
+     * Conversions should not add extra exposures.
+     *
      * @throws ToggleBoxException
      */
     public function trackConversion(
@@ -293,7 +288,8 @@ class ToggleBoxClient
         ExperimentContext $context,
         ConversionData $data,
     ): void {
-        $assignment = $this->getVariant($experimentKey, $context);
+        // Use no-track variant to avoid inflating exposure stats
+        $assignment = $this->getVariantWithoutTracking($experimentKey, $context);
 
         if ($assignment !== null) {
             $this->queueEvent('conversion', [
@@ -307,6 +303,33 @@ class ToggleBoxClient
     }
 
     /**
+     * Get the assigned variation without tracking an exposure.
+     *
+     * Useful for conversion tracking where you need the assignment
+     * but don't want to inflate exposure stats.
+     *
+     * @throws ToggleBoxException
+     */
+    public function getVariantWithoutTracking(string $experimentKey, ExperimentContext $context): ?VariantAssignment
+    {
+        $experiments = $this->getExperiments();
+        $experiment = null;
+
+        foreach ($experiments as $exp) {
+            if ($exp->experimentKey === $experimentKey) {
+                $experiment = $exp;
+                break;
+            }
+        }
+
+        if ($experiment === null) {
+            throw new ToggleBoxException("Experiment \"{$experimentKey}\" not found");
+        }
+
+        return $this->assignVariation($experiment, $context);
+    }
+
+    /**
      * Get all experiments.
      *
      * @return Experiment[]
@@ -316,9 +339,12 @@ class ToggleBoxClient
     {
         $cacheKey = "experiments:{$this->platform}:{$this->environment}";
 
-        $cached = $this->cache->get($cacheKey);
-        if ($cached !== null) {
-            return $cached;
+        // SECURITY: Only use cache if enabled
+        if ($this->cacheEnabled) {
+            $cached = $this->cache->get($cacheKey);
+            if ($cached !== null) {
+                return $cached;
+            }
         }
 
         $path = "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/experiments";
@@ -329,7 +355,10 @@ class ToggleBoxClient
             $response['data'] ?? []
         );
 
-        $this->cache->set($cacheKey, $experiments, $this->cacheTtl);
+        // Only cache if enabled
+        if ($this->cacheEnabled) {
+            $this->cache->set($cacheKey, $experiments, $this->cacheTtl);
+        }
 
         return $experiments;
     }
@@ -360,12 +389,17 @@ class ToggleBoxClient
      */
     public function trackEvent(string $eventName, ExperimentContext $context, ?array $data = null): void
     {
+        // SECURITY: Guard against null access on $data array
+        $experimentKey = is_array($data) ? ($data['experimentKey'] ?? null) : null;
+        $variationKey = is_array($data) ? ($data['variationKey'] ?? null) : null;
+        $properties = is_array($data) ? ($data['properties'] ?? []) : [];
+
         $this->queueEvent('custom_event', [
             'eventName' => $eventName,
             'userId' => $context->userId,
-            'experimentKey' => $data['experimentKey'] ?? null,
-            'variationKey' => $data['variationKey'] ?? null,
-            'properties' => $data['properties'] ?? [],
+            'experimentKey' => $experimentKey,
+            'variationKey' => $variationKey,
+            'properties' => $properties,
             'country' => $context->country,
             'language' => $context->language,
         ]);
@@ -380,7 +414,7 @@ class ToggleBoxClient
      */
     public function refresh(): void
     {
-        $this->cache->delete("config:{$this->platform}:{$this->environment}:{$this->configVersion}");
+        $this->cache->delete("config:{$this->platform}:{$this->environment}");
         $this->cache->delete("flags:{$this->platform}:{$this->environment}");
         $this->cache->delete("experiments:{$this->platform}:{$this->environment}");
 
@@ -430,17 +464,48 @@ class ToggleBoxClient
 
     private function evaluateFlag(Flag $flag, FlagContext $context): FlagResult
     {
-        // If flag is disabled, always return valueA
+        // Helper to get value by served indicator
+        $getValue = fn(string $which): mixed => $which === 'A' ? $flag->valueA : $flag->valueB;
+
+        // Helper to get default served value
+        $getDefaultServed = fn(): string => $flag->defaultValue ?? 'B';
+
+        // 1) Disabled → return defaultValue (not always A)
         if (!$flag->enabled) {
+            $served = $getDefaultServed();
             return new FlagResult(
                 flagKey: $flag->flagKey,
-                value: $flag->valueA,
-                servedValue: 'A',
+                value: $getValue($served),
+                servedValue: $served,
                 reason: 'flag_disabled',
             );
         }
 
-        // Check targeting
+        // Get force arrays from targeting (API sends them under targeting, not top-level)
+        $forceExcludeUsers = $flag->targeting['forceExcludeUsers'] ?? [];
+        $forceIncludeUsers = $flag->targeting['forceIncludeUsers'] ?? [];
+
+        // 2) forceExclude → B (excluded from feature/treatment, gets control)
+        if (!empty($forceExcludeUsers) && in_array($context->userId, $forceExcludeUsers, true)) {
+            return new FlagResult(
+                flagKey: $flag->flagKey,
+                value: $getValue('B'),
+                servedValue: 'B',
+                reason: 'force_excluded',
+            );
+        }
+
+        // 3) forceInclude → A (included in feature/treatment)
+        if (!empty($forceIncludeUsers) && in_array($context->userId, $forceIncludeUsers, true)) {
+            return new FlagResult(
+                flagKey: $flag->flagKey,
+                value: $getValue('A'),
+                servedValue: 'A',
+                reason: 'force_included',
+            );
+        }
+
+        // 4) Check targeting (country/language)
         if ($flag->targeting !== null) {
             $countries = $flag->targeting['countries'] ?? [];
 
@@ -463,19 +528,21 @@ class ToggleBoxClient
                             }
 
                             if (!$matchedLanguage) {
+                                // Language doesn't match → return defaultValue (not A)
+                                $served = $getDefaultServed();
                                 return new FlagResult(
                                     flagKey: $flag->flagKey,
-                                    value: $flag->valueA,
-                                    servedValue: 'A',
+                                    value: $getValue($served),
+                                    servedValue: $served,
                                     reason: 'language_not_targeted',
                                 );
                             }
                         }
 
-                        // Country matches, return valueB
+                        // Country (and optionally language) matches → return B (treatment)
                         return new FlagResult(
                             flagKey: $flag->flagKey,
-                            value: $flag->valueB,
+                            value: $getValue('B'),
                             servedValue: 'B',
                             reason: 'targeting_match',
                         );
@@ -483,35 +550,40 @@ class ToggleBoxClient
                 }
 
                 if (!$matchedCountry) {
+                    // Country doesn't match → return defaultValue (not A)
+                    $served = $getDefaultServed();
                     return new FlagResult(
                         flagKey: $flag->flagKey,
-                        value: $flag->valueA,
-                        servedValue: 'A',
+                        value: $getValue($served),
+                        servedValue: $served,
                         reason: 'country_not_targeted',
                     );
                 }
             }
         }
 
-        // Default: use hash-based rollout
-        $hash = crc32($context->userId . ':' . $flag->flagKey);
-        $percentage = abs($hash % 100);
+        // 5) Rollout only if enabled
+        if ($flag->rolloutEnabled) {
+            $hash = crc32($context->userId . ':' . $flag->flagKey);
+            $percentage = abs($hash % 100);
 
-        // Default 50/50 split
-        if ($percentage < 50) {
+            $thresholdA = $flag->rolloutPercentageA;
+            $served = $percentage < $thresholdA ? 'A' : 'B';
             return new FlagResult(
                 flagKey: $flag->flagKey,
-                value: $flag->valueA,
-                servedValue: 'A',
+                value: $getValue($served),
+                servedValue: $served,
                 reason: 'rollout',
             );
         }
 
+        // 6) Default fallback when rollout is disabled
+        $served = $getDefaultServed();
         return new FlagResult(
             flagKey: $flag->flagKey,
-            value: $flag->valueB,
-            servedValue: 'B',
-            reason: 'rollout',
+            value: $getValue($served),
+            servedValue: $served,
+            reason: 'default',
         );
     }
 
@@ -519,6 +591,11 @@ class ToggleBoxClient
     {
         // Only running experiments assign variations
         if (!$experiment->isRunning()) {
+            return null;
+        }
+
+        // SECURITY: Check if experiment is within its scheduled time window
+        if (!$experiment->isWithinSchedule()) {
             return null;
         }
 
@@ -606,10 +683,17 @@ class ToggleBoxClient
 
     private function queueEvent(string $eventType, array $data): void
     {
-        $this->pendingEvents[] = [
-            'eventType' => $eventType,
-            'data' => $data,
-            'timestamp' => date('c'),
-        ];
+        // Enforce max queue size to prevent unbounded memory growth
+        if (count($this->pendingEvents) >= $this->maxQueueSize) {
+            // Drop oldest event to make room
+            array_shift($this->pendingEvents);
+        }
+
+        // Flatten event structure to match expected API format
+        // Merge type and timestamp with data instead of nesting
+        $this->pendingEvents[] = array_merge(
+            ['type' => $eventType, 'timestamp' => date('c')],
+            $data
+        );
     }
 }

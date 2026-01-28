@@ -23,6 +23,9 @@ class Experiment
         public readonly ?string $completedAt,
         public readonly string $createdAt,
         public readonly string $updatedAt,
+        // SECURITY: Added schedule fields for proper time-based validation
+        public readonly ?string $scheduledStartAt = null,
+        public readonly ?string $scheduledEndAt = null,
     ) {
     }
 
@@ -45,11 +48,38 @@ class Experiment
             completedAt: $data['completedAt'] ?? null,
             createdAt: $data['createdAt'],
             updatedAt: $data['updatedAt'],
+            scheduledStartAt: $data['scheduledStartAt'] ?? null,
+            scheduledEndAt: $data['scheduledEndAt'] ?? null,
         );
     }
 
     public function isRunning(): bool
     {
         return $this->status === 'running';
+    }
+
+    /**
+     * Check if experiment is within its scheduled time window.
+     * Returns true if no schedule is set or if current time is within window.
+     */
+    public function isWithinSchedule(): bool
+    {
+        $now = new \DateTimeImmutable();
+
+        if ($this->scheduledStartAt !== null) {
+            $startTime = new \DateTimeImmutable($this->scheduledStartAt);
+            if ($startTime > $now) {
+                return false; // Not started yet
+            }
+        }
+
+        if ($this->scheduledEndAt !== null) {
+            $endTime = new \DateTimeImmutable($this->scheduledEndAt);
+            if ($endTime < $now) {
+                return false; // Already ended
+            }
+        }
+
+        return true;
     }
 }
