@@ -1,6 +1,6 @@
 # ToggleBox PHP SDK
 
-Official PHP SDK for [ToggleBox](https://togglebox.io) - Remote Config, Feature Flags, and A/B Experiments.
+Official PHP SDK for [ToggleBox](https://github.com/ulpi-io/togglebox) - Remote Config, Feature Flags, and A/B Experiments.
 
 ## Installation
 
