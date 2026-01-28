@@ -41,6 +41,12 @@ class ToggleBoxClient
     /** Maximum pending events to prevent unbounded memory growth */
     private int $maxQueueSize = 1000;
 
+    /** Batch size before auto-flushing events */
+    private int $statsBatchSize = 20;
+
+    /** Maximum retry attempts for failed stats flushes */
+    private int $statsMaxRetries = 3;
+
     public function __construct(
         ClientOptions $options,
         ?CacheInterface $cache = null,
@@ -70,6 +76,11 @@ class ToggleBoxClient
         $this->cacheEnabled = $options->cache?->enabled ?? true;
         $this->http = new HttpClient($options->getApiUrl(), $options->apiKey);
         $this->cache = $cache ?? new ArrayCache();
+
+        // Read stats options
+        $this->statsBatchSize = $options->stats?->batchSize ?? 20;
+        $this->statsMaxRetries = $options->stats?->maxRetries ?? 3;
+        $this->maxQueueSize = $options->stats?->maxQueueSize ?? 1000;
     }
 
     // ==================== TIER 1: REMOTE CONFIGS ====================
@@ -424,7 +435,7 @@ class ToggleBoxClient
     }
 
     /**
-     * Flush pending stats events to the server.
+     * Flush pending stats events to the server with retry logic.
      */
     public function flushStats(): void
     {
@@ -432,12 +443,21 @@ class ToggleBoxClient
             return;
         }
 
-        try {
-            $path = "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/stats/events";
-            $this->http->post($path, ['events' => $this->pendingEvents]);
-            $this->pendingEvents = [];
-        } catch (ToggleBoxException) {
-            // Silently fail - stats are not critical
+        $path = "/api/v1/platforms/{$this->platform}/environments/{$this->environment}/stats/events";
+
+        for ($attempt = 0; $attempt < $this->statsMaxRetries; $attempt++) {
+            try {
+                $this->http->post($path, ['events' => $this->pendingEvents]);
+                $this->pendingEvents = [];
+                return;
+            } catch (ToggleBoxException $e) {
+                // Last attempt - give up silently (stats are not critical)
+                if ($attempt === $this->statsMaxRetries - 1) {
+                    return;
+                }
+                // Exponential backoff: 1s, 2s, 4s...
+                usleep((int)(1000 * pow(2, $attempt) * 1000));
+            }
         }
     }
 
@@ -695,5 +715,10 @@ class ToggleBoxClient
             ['type' => $eventType, 'timestamp' => date('c')],
             $data
         );
+
+        // Auto-flush when batch size is reached
+        if (count($this->pendingEvents) >= $this->statsBatchSize) {
+            $this->flushStats();
+        }
     }
 }
