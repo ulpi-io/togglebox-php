@@ -9,8 +9,17 @@
     "feature-flags",
     "remote-config",
     "ab-testing",
-    "experiments"
+    "experiments",
+    "configuration-management",
+    "experimentation",
+    "analytics"
   ],
+  "homepage": "https://github.com/ulpi-io/togglebox",
+  "support": {
+    "issues": "https://github.com/ulpi-io/togglebox/issues",
+    "source": "https://github.com/ulpi-io/togglebox",
+    "docs": "https://github.com/ulpi-io/togglebox/tree/main/packages/sdk-php"
+  },
   "authors": [
     {
       "name": "ToggleBox Team",
