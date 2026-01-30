@@ -391,43 +391,6 @@ class ToggleBoxClient
         }
     }
 
-    /**
-     * Track a custom event.
-     *
-     * If experimentKey and variationKey are provided in $data, this also tracks
-     * a conversion event for experiment analytics (parity with JS SDK behavior).
-     *
-     * @param string $eventName Name of the event
-     * @param ExperimentContext $context User context
-     * @param array|null $data Optional event data with 'experimentKey', 'variationKey', 'properties'
-     */
-    public function trackEvent(string $eventName, ExperimentContext $context, ?array $data = null): void
-    {
-        // SECURITY: Guard against null access on $data array
-        $experimentKey = is_array($data) ? ($data['experimentKey'] ?? null) : null;
-        $variationKey = is_array($data) ? ($data['variationKey'] ?? null) : null;
-        $properties = is_array($data) ? ($data['properties'] ?? []) : [];
-
-        // Always send custom_event for general tracking
-        $this->queueEvent('custom_event', [
-            'eventName' => $eventName,
-            'userId' => $context->userId,
-            'properties' => $properties,
-            'country' => $context->country,
-            'language' => $context->language,
-        ]);
-
-        // Also track conversion if experiment context provided (parity with JS SDK)
-        if ($experimentKey !== null && $variationKey !== null) {
-            $this->queueEvent('conversion', [
-                'experimentKey' => $experimentKey,
-                'metricName' => $eventName,
-                'variationKey' => $variationKey,
-                'userId' => $context->userId,
-            ]);
-        }
-    }
-
     // ==================== CACHE & LIFECYCLE ====================
 
     /**

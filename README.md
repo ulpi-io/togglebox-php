@@ -103,18 +103,6 @@ $client->trackConversion('checkout-redesign', $context, new ConversionData(
     value: 99.99, // Optional: for sum/average metrics
 ));
 
-// Track a custom event
-// Note: When both experimentKey and variationKey are provided,
-// this also tracks a conversion event for experiment analytics.
-$client->trackEvent('page_view', $context, [
-    'experimentKey' => 'checkout-redesign', // Optional: ties event to experiment
-    'variationKey' => 'variant_1',          // Optional: required if experimentKey is set
-    'properties' => [                       // Optional: additional event data
-        'page' => '/checkout',
-        'referrer' => 'google.com',
-    ],
-]);
-
 // Get experiment metadata without assignment
 $experimentInfo = $client->getExperimentInfo('checkout-redesign');
 if ($experimentInfo !== null) {
